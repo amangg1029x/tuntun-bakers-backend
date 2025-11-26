@@ -93,7 +93,8 @@ const orderSchema = new mongoose.Schema({
 orderSchema.pre('save', async function(next) {
   if (!this.orderNumber) {
     const timestamp = Date.now();
-    this.orderNumber = `TB-${timestamp}`;
+    const random = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
+    this.orderNumber = `TB-${timestamp}-${random}`;
   }
   next();
 });
