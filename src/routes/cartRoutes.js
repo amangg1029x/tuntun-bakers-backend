@@ -7,10 +7,10 @@ const {
   removeFromCart,
   clearCart
 } = require('../controllers/cartController');
-const { protect } = require('../middleware/auth');
+const { requireAuth, withAuth, clerkAuth } = require('../middleware/clerkAuth');
 
-// All routes require authentication
-router.use(protect);
+// All routes require Clerk authentication
+router.use(requireAuth, withAuth, clerkAuth);
 
 router.get('/', getCart);
 router.post('/add', addToCart);

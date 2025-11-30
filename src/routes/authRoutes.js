@@ -1,18 +1,18 @@
 const express = require('express');
 const router = express.Router();
 const {
-  register,
-  login,
-  logout,
+  clerkWebhook,
   getMe,
-  forgotPassword,
+  logout
 } = require('../controllers/authController');
-const { protect } = require('../middleware/auth');
+const { requireAuth, withAuth, clerkAuth } = require('../middleware/clerkAuth');
+router.use(requireAuth, withAuth, clerkAuth);
 
-router.post('/register', register);
-router.post('/login', login);
+// Webhook endpoint (no auth required - Clerk will send events)
+router.post('/webhook', clerkWebhook);
+
+// Protected routes
+router.get('/me', requireAuth, withAuth, clerkAuth, getMe);
 router.post('/logout', logout);
-router.get('/me', protect, getMe);
-router.post('/forgot-password', forgotPassword);
 
 module.exports = router;

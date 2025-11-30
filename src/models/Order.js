@@ -16,12 +16,6 @@ const orderItemSchema = new mongoose.Schema({
   emoji: String
 });
 
-function generateOrderNumber() {
-  const ts = Date.now(); // or use formatted date
-  const rnd = Math.floor(Math.random() * 9000) + 1000;
-  return `TN-${ts}-${rnd}`;
-}
-
 const orderSchema = new mongoose.Schema({
   orderNumber: {
     type: String,
@@ -45,12 +39,28 @@ const orderSchema = new mongoose.Schema({
   paymentMethod: {
     type: String,
     required: true,
-    enum: ['upi', 'cod', 'card', 'netbanking']
+    enum: ['upi', 'cod', 'card', 'netbanking', 'razorpay']
   },
   paymentStatus: {
     type: String,
     enum: ['Pending', 'Paid', 'Refunded', 'Failed'],
     default: 'Pending'
+  },
+  // Razorpay specific fields
+  razorpayOrderId: {
+    type: String,
+    sparse: true
+  },
+  razorpayPaymentId: {
+    type: String,
+    sparse: true
+  },
+  razorpaySignature: {
+    type: String,
+    sparse: true
+  },
+  paymentError: {
+    type: String
   },
   status: {
     type: String,
@@ -93,8 +103,7 @@ const orderSchema = new mongoose.Schema({
 orderSchema.pre('save', async function(next) {
   if (!this.orderNumber) {
     const timestamp = Date.now();
-    const random = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
-    this.orderNumber = `TB-${timestamp}-${random}`;
+    this.orderNumber = `TB-${timestamp}`;
   }
   next();
 });

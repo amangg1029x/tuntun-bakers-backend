@@ -18,6 +18,13 @@ const paymentMethodSchema = new mongoose.Schema({
 });
 
 const userSchema = new mongoose.Schema({
+  // Clerk ID (required for Clerk users)
+  clerkId: {
+    type: String,
+    unique: true,
+    sparse: true, // Allows null values for non-Clerk users
+    index: true
+  },
   name: {
     type: String,
     required: [true, 'Please provide a name'],
@@ -32,12 +39,11 @@ const userSchema = new mongoose.Schema({
   },
   phone: {
     type: String,
-    required: [true, 'Please provide a phone number'],
     match: [/^[+]?[\d\s-()]+$/, 'Please provide a valid phone number']
   },
+  // Password is now optional (only for legacy users)
   password: {
     type: String,
-    required: [true, 'Please provide a password'],
     minlength: 6,
     select: false
   },
@@ -62,23 +68,39 @@ const userSchema = new mongoose.Schema({
     type: Boolean,
     default: false
   },
+  // Stats for user profile
+  stats: {
+    totalOrders: { type: Number, default: 0 },
+    totalSpent: { type: Number, default: 0 },
+    reviewsGiven: { type: Number, default: 0 }
+  },
+  // Legacy JWT fields (keep for backward compatibility)
   resetPasswordToken: String,
   resetPasswordExpire: Date
 }, {
   timestamps: true
 });
 
-// Hash password before saving
+// Add index for email lookup
+userSchema.index({ email: 1 });
+
+// Hash password before saving (only if password exists and is modified)
 userSchema.pre('save', async function(next) {
-  if (!this.isModified('password')) {
-    next();
+  // Skip hashing if password hasn't been modified or doesn't exist
+  if (!this.isModified('password') || !this.password) {
+    return next();
   }
+  
   const salt = await bcrypt.genSalt(10);
   this.password = await bcrypt.hash(this.password, salt);
+  next();
 });
 
-// Compare password
+// Compare password (for legacy users)
 userSchema.methods.comparePassword = async function(enteredPassword) {
+  if (!this.password) {
+    return false;
+  }
   return await bcrypt.compare(enteredPassword, this.password);
 };
 

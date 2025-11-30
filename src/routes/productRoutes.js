@@ -8,15 +8,14 @@ const {
   deleteProduct,
   searchProducts
 } = require('../controllers/productController');
-const { protect, authorize } = require('../middleware/auth');
 
 router.get('/', getProducts);
 router.get('/search', searchProducts);
 router.get('/:id', getProduct);
 
 // Admin only routes
-router.post('/', protect, authorize('admin'), createProduct);
-router.put('/:id', protect, authorize('admin'), updateProduct);
-router.delete('/:id', protect, authorize('admin'), deleteProduct);
+router.post('/', createProduct);
+router.put('/:id', updateProduct);
+router.delete('/:id', deleteProduct);
 
 module.exports = router;

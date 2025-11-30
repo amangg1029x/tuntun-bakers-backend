@@ -10,13 +10,12 @@ const {
   getPaymentMethods,
   addPaymentMethod,
   deletePaymentMethod,
-  updatePreferences,
-  changePassword
+  updatePreferences
 } = require('../controllers/userController');
-const { protect } = require('../middleware/auth');
+const { requireAuth, withAuth, clerkAuth } = require('../middleware/clerkAuth');
 
-// All routes require authentication
-router.use(protect);
+// All routes require Clerk authentication
+router.use(requireAuth, withAuth, clerkAuth);
 
 router.get('/profile', getProfile);
 router.put('/profile', updateProfile);
@@ -31,6 +30,5 @@ router.post('/payment-methods', addPaymentMethod);
 router.delete('/payment-methods/:methodId', deletePaymentMethod);
 
 router.put('/preferences', updatePreferences);
-router.put('/change-password', changePassword);
 
 module.exports = router;

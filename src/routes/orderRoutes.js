@@ -9,10 +9,8 @@ const {
   addReview,
   getAllOrders
 } = require('../controllers/orderController');
-const { protect, authorize } = require('../middleware/auth');
-
-// All routes require authentication
-router.use(protect);
+const { requireAuth, withAuth, clerkAuth } = require('../middleware/clerkAuth');
+router.use(requireAuth, withAuth, clerkAuth);
 
 router.post('/create', createOrder);
 router.get('/', getOrders);
@@ -21,7 +19,7 @@ router.put('/:id/cancel', cancelOrder);
 router.post('/:id/review', addReview);
 
 // Admin only routes
-router.get('/admin/all', authorize('admin'), getAllOrders);
-router.put('/:id/status', authorize('admin'), updateOrderStatus);
+router.get('/admin/all', getAllOrders);
+router.put('/:id/status', updateOrderStatus);
 
 module.exports = router;

@@ -1,6 +1,7 @@
 const Order = require('../models/Order');
 const Cart = require('../models/Cart');
 const Product = require('../models/Product');
+const verification = require('../controllers/paymentController')
 
 // @desc    Create new order
 // @route   POST /api/orders/create
@@ -61,7 +62,7 @@ exports.createOrder = async (req, res, next) => {
       items: orderItems,
       deliveryAddress,
       paymentMethod,
-      paymentStatus: paymentMethod === 'cod' ? 'Pending' : 'Paid',
+      paymentStatus: 'Pending',
       subtotal,
       deliveryCharge,
       totalAmount,
