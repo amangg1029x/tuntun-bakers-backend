@@ -24,6 +24,16 @@ const productSchema = new mongoose.Schema({
     type: String,
     default: '🍞'
   },
+  image: {
+    url: {
+      type: String,
+      default: ''
+    },
+    publicId: {
+      type: String,
+      default: ''
+    }
+  },
   rating: {
     type: Number,
     default: 0,
