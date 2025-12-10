@@ -24,7 +24,8 @@ const productRoutes = require('./routes/productRoutes');
 const cartRoutes = require('./routes/cartRoutes');
 const orderRoutes = require('./routes/orderRoutes');
 const favoriteRoutes = require('./routes/favoriteRoutes');
-const paymentRoutes = require('./routes/paymentRoutes'); // ← MUST HAVE THIS
+const paymentRoutes = require('./routes/paymentRoutes');
+const adminRoutes = require('./routes/adminRoutes'); // NEW: Admin routes
 
 // Import error handler
 const errorHandler = require('./middleware/errorHandler');
@@ -53,10 +54,12 @@ app.use('/api/products', productRoutes);
 app.use('/api/cart', cartRoutes);
 app.use('/api/orders', orderRoutes);
 app.use('/api/favorites', favoriteRoutes);
-app.use('/api/payment', paymentRoutes); // ← MUST HAVE THIS
+app.use('/api/payment', paymentRoutes);
+app.use('/api/admin', adminRoutes); // NEW: Admin routes
 
 // Log route registration for debugging
 console.log('✅ Payment routes registered at /api/payment');
+console.log('✅ Admin routes registered at /api/admin');
 
 // Root API summary
 app.get('/api', (req, res) => {
@@ -73,7 +76,8 @@ app.get('/api', (req, res) => {
       cart: '/api/cart',
       orders: '/api/orders',
       favorites: '/api/favorites',
-      payment: '/api/payment'
+      payment: '/api/payment',
+      admin: '/api/admin' // NEW
     }
   });
 });
@@ -110,7 +114,7 @@ const PORT = process.env.PORT || 5000;
 connectDB().then(() => {
   app.listen(PORT, () => {
     console.log(`🚀 Server running on http://localhost:${PORT}`);
-    console.log(`📝 Environment: ${process.env.NODE_ENV}`);
+    console.log(`📋 Environment: ${process.env.NODE_ENV}`);
     console.log(`🔐 Authentication: Clerk`);
     console.log(`💳 Payment Gateway: Razorpay`);
     console.log(`\n📋 Available Routes:`);
@@ -121,6 +125,7 @@ connectDB().then(() => {
     console.log(`   ✅ /api/orders`);
     console.log(`   ✅ /api/favorites`);
     console.log(`   ✅ /api/payment`);
+    console.log(`   ✅ /api/admin (Protected)`);
     console.log(`\n🔍 Test health: http://localhost:${PORT}/api/health\n`);
   });
 });
