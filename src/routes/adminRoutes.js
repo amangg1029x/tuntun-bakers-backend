@@ -4,6 +4,7 @@ const { clerkAuth } = require('../middleware/clerkAuth');
 const { authorize } = require('../middleware/clerkAuth');
 const adminController = require('../controllers/adminController');
 const orderController = require('../controllers/orderController');
+const uploadController = require('../controllers/uploadController');
 
 // All routes require authentication and admin role
 router.use(clerkAuth);
@@ -28,5 +29,9 @@ router.put('/orders/:id/status', orderController.updateOrderStatus);
 
 // Analytics
 router.get('/analytics/revenue', adminController.getRevenueAnalytics);
+
+// Image Upload
+router.post('/upload', uploadController.uploadImage);
+router.delete('/upload/:publicId', uploadController.deleteImage);
 
 module.exports = router;
