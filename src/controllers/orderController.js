@@ -87,22 +87,74 @@ exports.createOrder = async (req, res, next) => {
       orderPaymentStatus = 'Paid';
     }
 
-    // Create order items with product details
-    const orderItems = await Promise.all(
+    // ============================================
+    // STOCK VALIDATION & MANAGEMENT
+    // ============================================
+    
+    // Check stock availability for all items
+    const stockValidation = await Promise.all(
       items.map(async (item) => {
         const product = await Product.findById(item.product || item.id);
         if (!product) {
           throw new Error(`Product not found: ${item.product || item.id}`);
         }
-        return {
-          product: product._id,
-          name: product.name,
-          price: product.price,
-          quantity: item.quantity,
-          emoji: product.emoji
-        };
+        
+        // Check if product is in stock
+        if (!product.inStock) {
+          return {
+            valid: false,
+            productName: product.name,
+            message: `${product.name} is currently out of stock`
+          };
+        }
+        
+        // Check if sufficient quantity available
+        if (product.stockQuantity < item.quantity) {
+          return {
+            valid: false,
+            productName: product.name,
+            message: `Only ${product.stockQuantity} units of ${product.name} available (requested: ${item.quantity})`
+          };
+        }
+        
+        return { valid: true, product, quantity: item.quantity };
       })
     );
+
+    // Check if any items failed validation
+    const invalidItems = stockValidation.filter(v => !v.valid);
+    if (invalidItems.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Some items are not available',
+        errors: invalidItems.map(item => item.message)
+      });
+    }
+
+    // Deduct stock for all items
+    await Promise.all(
+      stockValidation.map(async ({ product, quantity }) => {
+        product.stockQuantity -= quantity;
+        
+        // Mark as out of stock if quantity reaches 0
+        if (product.stockQuantity <= 0) {
+          product.inStock = false;
+          product.stockQuantity = 0;
+        }
+        
+        await product.save();
+        console.log(`📦 Stock updated: ${product.name} - Remaining: ${product.stockQuantity}`);
+      })
+    );
+
+    // Create order items with product details
+    const orderItems = stockValidation.map(({ product, quantity }) => ({
+      product: product._id,
+      name: product.name,
+      price: product.price,
+      quantity: quantity,
+      emoji: product.emoji
+    }));
 
     // Calculate estimated delivery time
     const estimatedDelivery = new Date();
@@ -250,7 +302,7 @@ exports.getOrder = async (req, res, next) => {
 // @access  Private
 exports.cancelOrder = async (req, res, next) => {
   try {
-    const order = await Order.findById(req.params.id);
+    const order = await Order.findById(req.params.id).populate('items.product');
 
     if (!order) {
       return res.status(404).json({
@@ -275,6 +327,28 @@ exports.cancelOrder = async (req, res, next) => {
       });
     }
 
+    // ============================================
+    // RESTORE STOCK ON CANCELLATION
+    // ============================================
+    
+    // Restore stock for all items in the order
+    await Promise.all(
+      order.items.map(async (item) => {
+        const product = await Product.findById(item.product);
+        if (product) {
+          product.stockQuantity += item.quantity;
+          
+          // Mark as in stock if it was out of stock
+          if (!product.inStock && product.stockQuantity > 0) {
+            product.inStock = true;
+          }
+          
+          await product.save();
+          console.log(`📦 Stock restored: ${product.name} - New quantity: ${product.stockQuantity}`);
+        }
+      })
+    );
+
     order.status = 'Cancelled';
     order.cancelledAt = new Date();
     order.cancelReason = req.body.reason || 'Cancelled by user';
@@ -287,6 +361,7 @@ exports.cancelOrder = async (req, res, next) => {
 
     res.status(200).json({
       success: true,
+      message: 'Order cancelled and stock restored',
       data: order
     });
   } catch (error) {
