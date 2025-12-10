@@ -6,6 +6,7 @@ const verification = require('../controllers/paymentController')
 // @desc    Create new order
 // @route   POST /api/orders/create
 // @access  Private
+
 exports.createOrder = async (req, res, next) => {
   try {
     const {
@@ -15,7 +16,12 @@ exports.createOrder = async (req, res, next) => {
       subtotal,
       deliveryCharge,
       totalAmount,
-      notes
+      notes,
+      // NEW: Payment details (only for razorpay)
+      paymentStatus,
+      razorpayOrderId,
+      razorpayPaymentId,
+      razorpaySignature
     } = req.body;
 
     // Validate items
@@ -24,6 +30,61 @@ exports.createOrder = async (req, res, next) => {
         success: false,
         message: 'No items in order'
       });
+    }
+
+    // Validate payment method
+    const validPaymentMethods = ['cod', 'razorpay', 'upi', 'card', 'netbanking'];
+    if (!validPaymentMethods.includes(paymentMethod)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid payment method'
+      });
+    }
+
+    // ============================================
+    // PAYMENT METHOD VALIDATION
+    // ============================================
+    
+    // For Razorpay: Payment MUST be completed before order creation
+    if (paymentMethod === 'razorpay') {
+      // Check if payment details are provided
+      if (!paymentStatus || paymentStatus !== 'Paid') {
+        return res.status(400).json({
+          success: false,
+          message: 'Payment must be completed before creating order'
+        });
+      }
+
+      // Verify payment details exist
+      if (!razorpayOrderId || !razorpayPaymentId || !razorpaySignature) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid payment details'
+        });
+      }
+
+      // Optional: Re-verify payment signature for extra security
+      const crypto = require('crypto');
+      const sign = razorpayOrderId + '|' + razorpayPaymentId;
+      const expectedSign = crypto
+        .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET)
+        .update(sign.toString())
+        .digest('hex');
+
+      if (razorpaySignature !== expectedSign) {
+        return res.status(400).json({
+          success: false,
+          message: 'Payment verification failed. Invalid signature.'
+        });
+      }
+
+      console.log('✅ Payment verified for Razorpay order');
+    }
+
+    // For COD: Payment status is Pending
+    let orderPaymentStatus = 'Pending';
+    if (paymentMethod === 'razorpay' && paymentStatus === 'Paid') {
+      orderPaymentStatus = 'Paid';
     }
 
     // Create order items with product details
@@ -47,29 +108,68 @@ exports.createOrder = async (req, res, next) => {
     const estimatedDelivery = new Date();
     estimatedDelivery.setMinutes(estimatedDelivery.getMinutes() + 45);
 
-    // Create timeline
-    const timeline = [
-      { status: 'Order Placed', time: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }), completed: true },
-      { status: 'Confirmed', time: 'Pending', completed: false },
-      { status: 'Preparing', time: 'Pending', completed: false },
-      { status: 'Out for Delivery', time: 'Pending', completed: false },
-      { status: 'Delivered', time: `${estimatedDelivery.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })} (Est.)`, completed: false }
+    // Create timeline based on payment status
+    let initialStatus = 'Pending';
+    let timeline = [
+      { 
+        status: 'Order Placed', 
+        time: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }), 
+        completed: true 
+      }
     ];
 
-    // Create order
-    const order = await Order.create({
+    // For paid orders (Razorpay): Auto-confirm
+    if (orderPaymentStatus === 'Paid') {
+      initialStatus = 'Confirmed';
+      timeline.push({
+        status: 'Confirmed',
+        time: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
+        completed: true
+      });
+    } else {
+      timeline.push({
+        status: 'Confirmed',
+        time: 'Pending',
+        completed: false
+      });
+    }
+
+    // Add remaining timeline steps
+    timeline.push(
+      { status: 'Preparing', time: 'Pending', completed: false },
+      { status: 'Out for Delivery', time: 'Pending', completed: false },
+      { 
+        status: 'Delivered', 
+        time: `${estimatedDelivery.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })} (Est.)`, 
+        completed: false 
+      }
+    );
+
+    // Create order object
+    const orderObject = {
       user: req.user.id,
       items: orderItems,
       deliveryAddress,
       paymentMethod,
-      paymentStatus: 'Pending',
+      paymentStatus: orderPaymentStatus,
+      status: initialStatus,
       subtotal,
       deliveryCharge,
       totalAmount,
       estimatedDelivery,
       timeline,
-      notes
-    });
+      notes: notes || ''
+    };
+
+    // Add Razorpay details if payment method is razorpay
+    if (paymentMethod === 'razorpay' && orderPaymentStatus === 'Paid') {
+      orderObject.razorpayOrderId = razorpayOrderId;
+      orderObject.razorpayPaymentId = razorpayPaymentId;
+      orderObject.razorpaySignature = razorpaySignature;
+    }
+
+    // Create order
+    const order = await Order.create(orderObject);
 
     // Clear user's cart
     await Cart.findOneAndUpdate(
@@ -80,11 +180,15 @@ exports.createOrder = async (req, res, next) => {
     // Populate order details
     await order.populate('items.product');
 
+    // Log order creation
+    console.log(`✅ Order created: ${order.orderNumber} | Payment: ${orderPaymentStatus} | Method: ${paymentMethod}`);
+
     res.status(201).json({
       success: true,
       data: order
     });
   } catch (error) {
+    console.error('❌ Create order error:', error);
     next(error);
   }
 };

@@ -6,7 +6,7 @@ const dotenv = require('dotenv');
 const { clerkMiddleware } = require('@clerk/express');
 
 // Load environment variables
-dotenv.config();
+require('dotenv').config();
 
 // Validate required environment variables
 const requiredEnvVars = ['MONGODB_URI', 'CLERK_SECRET_KEY', 'CLIENT_URL', 'RAZORPAY_KEY_ID', 'RAZORPAY_KEY_SECRET'];
@@ -24,7 +24,7 @@ const productRoutes = require('./routes/productRoutes');
 const cartRoutes = require('./routes/cartRoutes');
 const orderRoutes = require('./routes/orderRoutes');
 const favoriteRoutes = require('./routes/favoriteRoutes');
-const paymentRoutes = require('./routes/paymentRoutes');
+const paymentRoutes = require('./routes/paymentRoutes'); // ← MUST HAVE THIS
 
 // Import error handler
 const errorHandler = require('./middleware/errorHandler');
@@ -53,7 +53,10 @@ app.use('/api/products', productRoutes);
 app.use('/api/cart', cartRoutes);
 app.use('/api/orders', orderRoutes);
 app.use('/api/favorites', favoriteRoutes);
-app.use('/api/payment', paymentRoutes);
+app.use('/api/payment', paymentRoutes); // ← MUST HAVE THIS
+
+// Log route registration for debugging
+console.log('✅ Payment routes registered at /api/payment');
 
 // Root API summary
 app.get('/api', (req, res) => {
@@ -110,6 +113,15 @@ connectDB().then(() => {
     console.log(`📝 Environment: ${process.env.NODE_ENV}`);
     console.log(`🔐 Authentication: Clerk`);
     console.log(`💳 Payment Gateway: Razorpay`);
+    console.log(`\n📋 Available Routes:`);
+    console.log(`   ✅ /api/auth`);
+    console.log(`   ✅ /api/user`);
+    console.log(`   ✅ /api/products`);
+    console.log(`   ✅ /api/cart`);
+    console.log(`   ✅ /api/orders`);
+    console.log(`   ✅ /api/favorites`);
+    console.log(`   ✅ /api/payment`);
+    console.log(`\n🔍 Test health: http://localhost:${PORT}/api/health\n`);
   });
 });
 
