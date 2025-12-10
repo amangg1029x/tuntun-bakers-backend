@@ -149,7 +149,7 @@ exports.getDashboardStats = async (req, res, next) => {
   }
 };
 
-// @desc    Get all customers with pagination
+// @desc    Get all customers with pagination and stats
 // @route   GET /api/admin/customers
 // @access  Private/Admin
 exports.getCustomers = async (req, res, next) => {
@@ -168,14 +168,44 @@ exports.getCustomers = async (req, res, next) => {
       ];
     }
 
-    const [customers, total] = await Promise.all([
+    const [customersData, total] = await Promise.all([
       User.find(query)
-        .select('name email phone stats createdAt addresses')
+        .select('name email phone createdAt addresses')
         .sort('-createdAt')
         .skip(skip)
-        .limit(limit),
+        .limit(limit)
+        .lean(),
       User.countDocuments(query)
     ]);
+
+    // Calculate stats for each customer from orders
+    const customers = await Promise.all(
+      customersData.map(async (customer) => {
+        const orderStats = await Order.aggregate([
+          { 
+            $match: { 
+              user: customer._id,
+              status: { $ne: 'Cancelled' }
+            } 
+          },
+          {
+            $group: {
+              _id: null,
+              totalOrders: { $sum: 1 },
+              totalSpent: { $sum: '$totalAmount' }
+            }
+          }
+        ]);
+
+        return {
+          ...customer,
+          stats: {
+            totalOrders: orderStats[0]?.totalOrders || 0,
+            totalSpent: orderStats[0]?.totalSpent || 0
+          }
+        };
+      })
+    );
 
     res.status(200).json({
       success: true,
@@ -186,6 +216,7 @@ exports.getCustomers = async (req, res, next) => {
       data: customers
     });
   } catch (error) {
+    console.error('Get customers error:', error);
     next(error);
   }
 };
@@ -205,18 +236,42 @@ exports.getCustomerDetails = async (req, res, next) => {
       });
     }
 
+    // Calculate customer stats
+    const orderStats = await Order.aggregate([
+      { 
+        $match: { 
+          user: mongoose.Types.ObjectId(req.params.id),
+          status: { $ne: 'Cancelled' }
+        } 
+      },
+      {
+        $group: {
+          _id: null,
+          totalOrders: { $sum: 1 },
+          totalSpent: { $sum: '$totalAmount' }
+        }
+      }
+    ]);
+
     const orders = await Order.find({ user: req.params.id })
       .populate('items.product')
       .sort('-createdAt');
 
+    const customerData = customer.toObject();
+    customerData.stats = {
+      totalOrders: orderStats[0]?.totalOrders || 0,
+      totalSpent: orderStats[0]?.totalSpent || 0
+    };
+
     res.status(200).json({
       success: true,
       data: {
-        customer,
+        customer: customerData,
         orders
       }
     });
   } catch (error) {
+    console.error('Get customer details error:', error);
     next(error);
   }
 };
