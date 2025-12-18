@@ -236,11 +236,11 @@ exports.getCustomerDetails = async (req, res, next) => {
       });
     }
 
-    // Calculate customer stats
+    // Calculate customer stats - FIXED: Added 'new' keyword
     const orderStats = await Order.aggregate([
       { 
         $match: { 
-          user: mongoose.Types.ObjectId(req.params.id),
+          user: new mongoose.Types.ObjectId(req.params.id),
           status: { $ne: 'Cancelled' }
         } 
       },
