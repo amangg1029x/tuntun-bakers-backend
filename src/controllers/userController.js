@@ -1,4 +1,5 @@
 const User = require('../models/User');
+const Order = require('../models/Order');
 
 // @desc    Get user profile
 // @route   GET /api/user/profile
@@ -10,6 +11,35 @@ exports.getProfile = async (req, res, next) => {
     res.status(200).json({
       success: true,
       data: user
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Get user stats (calculated dynamically from orders)
+// @route   GET /api/user/stats
+// @access  Private
+exports.getUserStats = async (req, res, next) => {
+  try {
+    // Get all non-cancelled orders for the user
+    const orders = await Order.find({ 
+      user: req.user.id,
+      status: { $ne: 'Cancelled' }
+    });
+
+    // Calculate stats
+    const totalOrders = orders.length;
+    const totalSpent = orders.reduce((sum, order) => sum + (order.totalAmount || 0), 0);
+    const reviewsGiven = orders.filter(order => order.review && order.review.trim() !== '').length;
+
+    res.status(200).json({
+      success: true,
+      data: {
+        totalOrders,
+        totalSpent,
+        reviewsGiven
+      }
     });
   } catch (error) {
     next(error);
