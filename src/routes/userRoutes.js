@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const {
   getProfile,
+  getUserStats,
   updateProfile,
   getAddresses,
   addAddress,
@@ -18,6 +19,7 @@ const { requireAuth, withAuth, clerkAuth } = require('../middleware/clerkAuth');
 router.use(requireAuth, withAuth, clerkAuth);
 
 router.get('/profile', getProfile);
+router.get('/stats', getUserStats);
 router.put('/profile', updateProfile);
 
 router.get('/addresses', getAddresses);
