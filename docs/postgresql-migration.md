@@ -4,6 +4,15 @@
 
 This is a **migration in progress, not a completed backend conversion**. Existing controllers still use Mongoose. The production API should continue using MongoDB until SQL repositories/controllers have been implemented and tested.
 
+## PostgreSQL connection smoke test
+
+1. Install the PostgreSQL driver on this branch with `npm install pg` (this updates both package.json and package-lock.json).
+2. Set `DATABASE_URL` in your local, untracked `.env` file to the Neon connection string. Do not commit it or paste it into chat. Keep `MONGODB_URI` intact.
+3. Run `node src/scripts/test-postgres-connection.js`. It prints database/schema/time only; it does not print the connection string or change data.
+4. For a Vercel development/preview test, add `DATABASE_URL` only to the preview/development environment for a separate migration preview deployment. Do not change production environment variables yet.
+
+The pool is in `src/config/postgres.js`. It uses a small pool suitable for serverless deployment and enables verified TLS for Neon connections.
+
 ## Current migration tools
 
 1. Back up MongoDB before starting.
@@ -36,7 +45,7 @@ The export and validator are read-only with respect to the source database. The 
 
 ## Not yet implemented
 
-- PostgreSQL driver dependency and connection pool.
+- PostgreSQL driver dependency and lockfile update (run `npm install pg`).
 - SQL repository layer and converted controllers.
 - PostgreSQL import script.
 - Integration tests and production cutover.
