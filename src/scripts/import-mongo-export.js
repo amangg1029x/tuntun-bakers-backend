@@ -56,12 +56,12 @@ async function main() {
       for (const a of u.addresses || []) {
         if (!a.name || !a.phone || !a.address || !a.city || !a.pincode) continue;
         await client.query('INSERT INTO user_addresses (id,user_id,name,phone,address,landmark,city,pincode,is_default,created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',
-          [id(a) || uid+':address:'+u.addresses.indexOf(a),uid,a.name,a.phone,a.address,str(a.landmark),a.city,a.pincode,bool(a.isDefault),date(a.createdAt)]);
+          [id(a) || uid+':address:'+u.addresses.indexOf(a),uid,a.name,a.phone,a.address,str(a.landmark),a.city,a.pincode,bool(a.isDefault),date(a.createdAt) || date(u.createdAt) || new Date().toISOString()]);
       }
       for (const p of u.savedPaymentMethods || []) {
         if (!p.type || !p.details) continue;
         await client.query('INSERT INTO saved_payment_methods (id,user_id,type,details,is_default,created_at) VALUES ($1,$2,$3,$4,$5,$6)',
-          [id(p) || uid+':payment:'+u.savedPaymentMethods.indexOf(p),uid,en(p.type,['upi','card','netbanking'],'upi'),String(p.details),bool(p.isDefault),date(p.createdAt)]);
+          [id(p) || uid+':payment:'+u.savedPaymentMethods.indexOf(p),uid,en(p.type,['upi','card','netbanking'],'upi'),String(p.details),bool(p.isDefault),date(p.createdAt) || date(u.createdAt) || new Date().toISOString()]);
       }
     }
 
