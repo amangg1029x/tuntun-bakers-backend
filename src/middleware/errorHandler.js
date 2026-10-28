@@ -1,33 +1,11 @@
-const errorHandler = (err, req, res, next) => {
-  let error = { ...err };
-  error.message = err.message;
-
-  // Log error for debugging
-  console.error(err);
-
-  // Mongoose bad ObjectId
-  if (err.name === 'CastError') {
-    const message = 'Resource not found';
-    error = { message, statusCode: 404 };
-  }
-
-  // Mongoose duplicate key
-  if (err.code === 11000) {
-    const message = 'Duplicate field value entered';
-    error = { message, statusCode: 400 };
-  }
-
-  // Mongoose validation error
-  if (err.name === 'ValidationError') {
-    const message = Object.values(err.errors).map(val => val.message);
-    error = { message, statusCode: 400 };
-  }
-
-  res.status(error.statusCode || 500).json({
-    success: false,
-    message: error.message || 'Server Error',
-    ...(process.env.NODE_ENV === 'development' && { stack: err.stack })
-  });
+const errorHandler=(err,req,res,next)=>{
+ console.error(err);
+ let status=err.statusCode||500,message=err.message||'Server Error';
+ if(err.code==='23505'){status=409;message='A record with this value already exists';}
+ else if(err.code==='23503'){status=400;message='Related record does not exist or is still referenced';}
+ else if(err.code==='23514'||err.code==='22P02'){status=400;message='Invalid value provided';}
+ else if(err.name==='CastError'){status=404;message='Resource not found';}
+ else if(err.name==='ValidationError'){status=400;message=Object.values(err.errors||{}).map(v=>v.message).join(', ');}
+ res.status(status).json({success:false,message,...(process.env.NODE_ENV==='development'?{stack:err.stack}:{})});
 };
-
-module.exports = errorHandler;
+module.exports=errorHandler;

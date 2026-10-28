@@ -1,500 +1,194 @@
-const Order = require('../models/Order');
-const Cart = require('../models/Cart');
-const Product = require('../models/Product');
-const verification = require('../controllers/paymentController')
+const pool = require('../config/postgres');
+const crypto = require('crypto');
 
-// @desc    Create new order
-// @route   POST /api/orders/create
-// @access  Private
+async function getOrderWithItems(db, id) {
+  const order = await db.query('SELECT * FROM orders WHERE id=$1', [id]);
+  if (!order.rowCount) return null;
+  const items = await db.query('SELECT * FROM order_items WHERE order_id=$1 ORDER BY id', [id]);
+  return { ...order.rows[0], _id: id, items: items.rows };
+}
 
-exports.createOrder = async (req, res, next) => {
-  try {
-    const {
-      items,
-      deliveryAddress,
-      paymentMethod,
-      subtotal,
-      deliveryCharge,
-      totalAmount,
-      notes,
-      // NEW: Payment details (only for razorpay)
-      paymentStatus,
-      razorpayOrderId,
-      razorpayPaymentId,
-      razorpaySignature
-    } = req.body;
-
-    // Validate items
-    if (!items || items.length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: 'No items in order'
-      });
-    }
-
-    // Validate payment method
-    const validPaymentMethods = ['cod', 'razorpay', 'upi', 'card', 'netbanking'];
-    if (!validPaymentMethods.includes(paymentMethod)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid payment method'
-      });
-    }
-
-    // ============================================
-    // PAYMENT METHOD VALIDATION
-    // ============================================
-    
-    // For Razorpay: Payment MUST be completed before order creation
-    if (paymentMethod === 'razorpay') {
-      // Check if payment details are provided
-      if (!paymentStatus || paymentStatus !== 'Paid') {
-        return res.status(400).json({
-          success: false,
-          message: 'Payment must be completed before creating order'
-        });
-      }
-
-      // Verify payment details exist
-      if (!razorpayOrderId || !razorpayPaymentId || !razorpaySignature) {
-        return res.status(400).json({
-          success: false,
-          message: 'Invalid payment details'
-        });
-      }
-
-      // Optional: Re-verify payment signature for extra security
-      const crypto = require('crypto');
-      const sign = razorpayOrderId + '|' + razorpayPaymentId;
-      const expectedSign = crypto
-        .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET)
-        .update(sign.toString())
-        .digest('hex');
-
-      if (razorpaySignature !== expectedSign) {
-        return res.status(400).json({
-          success: false,
-          message: 'Payment verification failed. Invalid signature.'
-        });
-      }
-
-      console.log('✅ Payment verified for Razorpay order');
-    }
-
-    // For COD: Payment status is Pending
-    let orderPaymentStatus = 'Pending';
-    if (paymentMethod === 'razorpay' && paymentStatus === 'Paid') {
-      orderPaymentStatus = 'Paid';
-    }
-
-    // ============================================
-    // STOCK VALIDATION & MANAGEMENT
-    // ============================================
-    
-    // Check stock availability for all items
-    const stockValidation = await Promise.all(
-      items.map(async (item) => {
-        const product = await Product.findById(item.product || item.id);
-        if (!product) {
-          throw new Error(`Product not found: ${item.product || item.id}`);
-        }
-        
-        // Check if product is in stock
-        if (!product.inStock) {
-          return {
-            valid: false,
-            productName: product.name,
-            message: `${product.name} is currently out of stock`
-          };
-        }
-        
-        // Check if sufficient quantity available
-        if (product.stockQuantity < item.quantity) {
-          return {
-            valid: false,
-            productName: product.name,
-            message: `Only ${product.stockQuantity} units of ${product.name} available (requested: ${item.quantity})`
-          };
-        }
-        
-        return { valid: true, product, quantity: item.quantity };
-      })
-    );
-
-    // Check if any items failed validation
-    const invalidItems = stockValidation.filter(v => !v.valid);
-    if (invalidItems.length > 0) {
-      return res.status(400).json({
-        success: false,
-        message: 'Some items are not available',
-        errors: invalidItems.map(item => item.message)
-      });
-    }
-
-    // Deduct stock for all items
-    await Promise.all(
-      stockValidation.map(async ({ product, quantity }) => {
-        product.stockQuantity -= quantity;
-        
-        // Mark as out of stock if quantity reaches 0
-        if (product.stockQuantity <= 0) {
-          product.inStock = false;
-          product.stockQuantity = 0;
-        }
-        
-        await product.save();
-        console.log(`📦 Stock updated: ${product.name} - Remaining: ${product.stockQuantity}`);
-      })
-    );
-
-    // Create order items with product details
-    const orderItems = stockValidation.map(({ product, quantity }) => ({
-      product: product._id,
-      name: product.name,
-      price: product.price,
-      quantity: quantity,
-      emoji: product.emoji
-    }));
-
-    // Calculate estimated delivery time
-    const estimatedDelivery = new Date();
-    estimatedDelivery.setMinutes(estimatedDelivery.getMinutes() + 45);
-
-    // Create timeline based on payment status
-    let initialStatus = 'Pending';
-    let timeline = [
-      { 
-        status: 'Order Placed', 
-        time: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }), 
-        completed: true 
-      }
-    ];
-
-    // For paid orders (Razorpay): Auto-confirm
-    if (orderPaymentStatus === 'Paid') {
-      initialStatus = 'Confirmed';
-      timeline.push({
-        status: 'Confirmed',
-        time: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
-        completed: true
-      });
-    } else {
-      timeline.push({
-        status: 'Confirmed',
-        time: 'Pending',
-        completed: false
-      });
-    }
-
-    // Add remaining timeline steps
-    timeline.push(
-      { status: 'Preparing', time: 'Pending', completed: false },
-      { status: 'Out for Delivery', time: 'Pending', completed: false },
-      { 
-        status: 'Delivered', 
-        time: `${estimatedDelivery.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })} (Est.)`, 
-        completed: false 
-      }
-    );
-
-    // Create order object
-    const orderObject = {
-      user: req.user.id,
-      items: orderItems,
-      deliveryAddress,
-      paymentMethod,
-      paymentStatus: orderPaymentStatus,
-      status: initialStatus,
-      subtotal,
-      deliveryCharge,
-      totalAmount,
-      estimatedDelivery,
-      timeline,
-      notes: notes || ''
-    };
-
-    // Add Razorpay details if payment method is razorpay
-    if (paymentMethod === 'razorpay' && orderPaymentStatus === 'Paid') {
-      orderObject.razorpayOrderId = razorpayOrderId;
-      orderObject.razorpayPaymentId = razorpayPaymentId;
-      orderObject.razorpaySignature = razorpaySignature;
-    }
-
-    // Create order
-    const order = await Order.create(orderObject);
-
-    // Clear user's cart
-    await Cart.findOneAndUpdate(
-      { user: req.user.id },
-      { items: [], totalAmount: 0 }
-    );
-
-    // Populate order details
-    await order.populate('items.product');
-
-    // Log order creation
-    console.log(`✅ Order created: ${order.orderNumber} | Payment: ${orderPaymentStatus} | Method: ${paymentMethod}`);
-
-    res.status(201).json({
-      success: true,
-      data: order
-    });
-  } catch (error) {
-    console.error('❌ Create order error:', error);
-    next(error);
-  }
-};
-
-// @desc    Get all orders for user
-// @route   GET /api/orders
-// @access  Private
 exports.getOrders = async (req, res, next) => {
   try {
-    const orders = await Order.find({ user: req.user.id })
-      .populate('items.product')
-      .sort('-createdAt');
-
-    res.status(200).json({
-      success: true,
-      count: orders.length,
-      data: orders
-    });
-  } catch (error) {
-    next(error);
-  }
+    const r = await pool.query('SELECT id FROM orders WHERE user_id=$1 ORDER BY created_at DESC', [req.user.id]);
+    res.json({ success: true, count: r.rowCount, data: await Promise.all(r.rows.map(x => getOrderWithItems(pool, x.id))) });
+  } catch (e) { next(e); }
 };
 
-// @desc    Get single order
-// @route   GET /api/orders/:id
-// @access  Private
 exports.getOrder = async (req, res, next) => {
   try {
-    const order = await Order.findById(req.params.id)
-      .populate('items.product')
-      .populate('user', 'name email phone');
-
-    if (!order) {
-      return res.status(404).json({
-        success: false,
-        message: 'Order not found'
-      });
-    }
-
-    // Make sure user owns this order
-    if (order.user._id.toString() !== req.user.id && req.user.role !== 'admin') {
-      return res.status(403).json({
-        success: false,
-        message: 'Not authorized to access this order'
-      });
-    }
-
-    res.status(200).json({
-      success: true,
-      data: order
-    });
-  } catch (error) {
-    next(error);
-  }
+    const r = await pool.query('SELECT id,user_id FROM orders WHERE id=$1', [req.params.id]);
+    if (!r.rowCount) return res.status(404).json({ success: false, message: 'Order not found' });
+    if (r.rows[0].user_id !== req.user.id && req.user.role !== 'admin') return res.status(403).json({ success: false, message: 'Not authorized' });
+    res.json({ success: true, data: await getOrderWithItems(pool, req.params.id) });
+  } catch (e) { next(e); }
 };
 
-// @desc    Cancel order
-// @route   PUT /api/orders/:id/cancel
-// @access  Private
-exports.cancelOrder = async (req, res, next) => {
+exports.createOrder = async (req, res, next) => {
+  const db = await pool.connect();
   try {
-    const order = await Order.findById(req.params.id).populate('items.product');
+    const b = req.body || {};
+    if (!Array.isArray(b.items) || !b.items.length) return res.status(400).json({ success: false, message: 'No items in order' });
+    if (!['cod', 'razorpay', 'upi', 'card', 'netbanking'].includes(b.paymentMethod)) return res.status(400).json({ success: false, message: 'Invalid payment method' });
+    const quantities = new Map();
+    for (const item of b.items) {
+      const productId = String(item.product || item.productId || item.id || item._id || '');
+      const quantity = Number(item.quantity);
+      if (!productId || !Number.isSafeInteger(quantity) || quantity < 1 || quantity > 100) {
+        return res.status(400).json({ success: false, message: 'Each item needs a product ID and a quantity from 1 to 100' });
+      }
+      quantities.set(productId, (quantities.get(productId) || 0) + quantity);
+    }
+    if ([...quantities.values()].some(q => q > 100)) return res.status(400).json({ success: false, message: 'Maximum quantity per product is 100' });
 
-    if (!order) {
-      return res.status(404).json({
-        success: false,
-        message: 'Order not found'
-      });
+    let paymentStatus = 'Pending';
+    if (b.paymentMethod === 'razorpay') {
+      const key = process.env.RAZORPAY_KEY_SECRET;
+      if (!key || b.paymentStatus !== 'Paid' || !b.razorpayOrderId || !b.razorpayPaymentId || !b.razorpaySignature) {
+        return res.status(400).json({ success: false, message: 'Payment verification failed' });
+      }
+      const expected = crypto.createHmac('sha256', key).update(b.razorpayOrderId + '|' + b.razorpayPaymentId).digest();
+      const supplied = Buffer.from(String(b.razorpaySignature));
+      if (supplied.length !== expected.toString('hex').length || !crypto.timingSafeEqual(Buffer.from(expected.toString('hex')), supplied)) {
+        return res.status(400).json({ success: false, message: 'Payment verification failed' });
+      }
+      paymentStatus = 'Paid';
     }
 
-    // Make sure user owns this order
-    if (order.user.toString() !== req.user.id) {
-      return res.status(403).json({
-        success: false,
-        message: 'Not authorized to cancel this order'
-      });
-    }
-
-    // Can only cancel if not already delivered or cancelled
-    if (order.status === 'Delivered' || order.status === 'Cancelled') {
-      return res.status(400).json({
-        success: false,
-        message: `Cannot cancel order with status: ${order.status}`
-      });
-    }
-
-    // ============================================
-    // RESTORE STOCK ON CANCELLATION
-    // ============================================
-    
-    // Restore stock for all items in the order
-    await Promise.all(
-      order.items.map(async (item) => {
-        const product = await Product.findById(item.product);
-        if (product) {
-          product.stockQuantity += item.quantity;
-          
-          // Mark as in stock if it was out of stock
-          if (!product.inStock && product.stockQuantity > 0) {
-            product.inStock = true;
-          }
-          
-          await product.save();
-          console.log(`📦 Stock restored: ${product.name} - New quantity: ${product.stockQuantity}`);
-        }
-      })
+    await db.query('BEGIN');
+    const productIds = [...quantities.keys()].sort();
+    const productsResult = await db.query(
+      'SELECT id,name,price,emoji,in_stock,stock_quantity FROM products WHERE id = ANY($1::text[]) ORDER BY id FOR UPDATE',
+      [productIds]
     );
-
-    order.status = 'Cancelled';
-    order.cancelledAt = new Date();
-    order.cancelReason = req.body.reason || 'Cancelled by user';
-
-    if (order.paymentStatus === 'Paid') {
-      order.paymentStatus = 'Refunded';
+    if (productsResult.rowCount !== productIds.length) {
+      await db.query('ROLLBACK');
+      return res.status(400).json({ success: false, message: 'One or more products were not found' });
     }
+    const products = new Map(productsResult.rows.map(p => [p.id, p]));
+    let subtotal = 0;
+    for (const [id, quantity] of quantities) {
+      const product = products.get(id);
+      if (!product.in_stock || product.stock_quantity < quantity) {
+        await db.query('ROLLBACK');
+        return res.status(409).json({ success: false, message: 'Insufficient stock for ' + product.name });
+      }
+      subtotal += Number(product.price) * quantity;
+    }
+    subtotal = Math.round((subtotal + Number.EPSILON) * 100) / 100;
+    const deliveryCharge = Number(b.deliveryCharge);
+    const safeDeliveryCharge = Number.isFinite(deliveryCharge) && deliveryCharge >= 0 && deliveryCharge <= 1000 ? deliveryCharge : 0;
+    const totalAmount = Math.round((subtotal + safeDeliveryCharge + Number.EPSILON) * 100) / 100;
+    const id = crypto.randomUUID();
+    const orderNumber = 'TB-' + Date.now().toString().slice(-8);
 
-    await order.save();
-
-    res.status(200).json({
-      success: true,
-      message: 'Order cancelled and stock restored',
-      data: order
-    });
-  } catch (error) {
-    next(error);
-  }
+    await db.query(
+      'INSERT INTO orders(id,order_number,user_id,delivery_address,payment_method,payment_status,razorpay_order_id,razorpay_payment_id,razorpay_signature,status,subtotal,delivery_charge,total_amount,notes) VALUES($1,$2,$3,$4::jsonb,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)',
+      [id, orderNumber, req.user.id, JSON.stringify(b.deliveryAddress || {}), b.paymentMethod, paymentStatus,
+        b.razorpayOrderId || null, b.razorpayPaymentId || null, b.razorpaySignature || null,
+        paymentStatus === 'Paid' ? 'Confirmed' : 'Pending', subtotal, safeDeliveryCharge, totalAmount,
+        typeof b.notes === 'string' ? b.notes.slice(0, 1000) : null]
+    );
+    for (const [productId, quantity] of quantities) {
+      const p = products.get(productId);
+      await db.query('INSERT INTO order_items(id,order_id,product_id,product_name,unit_price,quantity,emoji) VALUES($1,$2,$3,$4,$5,$6,$7)',
+        [crypto.randomUUID(), id, p.id, p.name, p.price, quantity, p.emoji]);
+      await db.query('UPDATE products SET stock_quantity=stock_quantity-$1,in_stock=(stock_quantity-$1)>0,updated_at=NOW() WHERE id=$2',
+        [quantity, productId]);
+    }
+    await db.query('DELETE FROM cart_items WHERE cart_id IN (SELECT id FROM carts WHERE user_id=$1)', [req.user.id]);
+    await db.query('COMMIT');
+    res.status(201).json({ success: true, data: await getOrderWithItems(pool, id) });
+  } catch (e) {
+    await db.query('ROLLBACK').catch(() => {});
+    next(e);
+  } finally { db.release(); }
 };
 
-// @desc    Update order status (Admin only)
-// @route   PUT /api/orders/:id/status
-// @access  Private/Admin
-exports.updateOrderStatus = async (req, res, next) => {
+exports.cancelOrder = async (req, res, next) => {
+  const db = await pool.connect();
   try {
-    const { status } = req.body;
-
-    const order = await Order.findById(req.params.id);
-
-    if (!order) {
-      return res.status(404).json({
-        success: false,
-        message: 'Order not found'
-      });
+    await db.query('BEGIN');
+    const found = await db.query('SELECT id,status,payment_status FROM orders WHERE id=$1 AND user_id=$2 FOR UPDATE', [req.params.id, req.user.id]);
+    if (!found.rowCount) {
+      await db.query('ROLLBACK');
+      return res.status(404).json({ success: false, message: 'Order not found' });
     }
-
-    const validStatuses = ['Pending', 'Confirmed', 'Preparing', 'Out for Delivery', 'Delivered', 'Cancelled'];
-
-    if (!validStatuses.includes(status)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid status'
-      });
+    const order = found.rows[0];
+    if (['Delivered', 'Cancelled'].includes(order.status)) {
+      await db.query('ROLLBACK');
+      return res.status(400).json({ success: false, message: 'Order cannot be cancelled' });
     }
-
-    order.status = status;
-
-    // Update timeline
-    const currentTime = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-    
-    order.timeline = order.timeline.map(step => {
-      if (step.status === status) {
-        return { ...step, time: currentTime, completed: true };
-      }
-      return step;
-    });
-
-    // Mark previous steps as completed
-    const statusOrder = ['Order Placed', 'Confirmed', 'Preparing', 'Out for Delivery', 'Delivered'];
-    const currentIndex = statusOrder.indexOf(status);
-    
-    order.timeline = order.timeline.map(step => {
-      const stepIndex = statusOrder.indexOf(step.status);
-      if (stepIndex <= currentIndex) {
-        return { ...step, completed: true };
-      }
-      return step;
-    });
-
-    if (status === 'Delivered') {
-      order.deliveredAt = new Date();
+    if (order.payment_status === 'Paid') {
+      await db.query('ROLLBACK');
+      return res.status(409).json({ success: false, message: 'This order is paid. Please contact support to arrange cancellation and refund.' });
     }
-
-    await order.save();
-
-    res.status(200).json({
-      success: true,
-      data: order
-    });
-  } catch (error) {
-    next(error);
-  }
+    const items = await db.query('SELECT product_id,quantity FROM order_items WHERE order_id=$1 AND product_id IS NOT NULL', [order.id]);
+    for (const item of items.rows) {
+      await db.query('UPDATE products SET stock_quantity=stock_quantity+$1,in_stock=TRUE,updated_at=NOW() WHERE id=$2', [item.quantity, item.product_id]);
+    }
+    await db.query("UPDATE orders SET status='Cancelled',cancelled_at=NOW(),cancel_reason=$1,updated_at=NOW() WHERE id=$2",
+      [typeof req.body?.reason === 'string' ? req.body.reason.slice(0, 500) : 'Cancelled by user', order.id]);
+    await db.query('COMMIT');
+    res.json({ success: true, data: await getOrderWithItems(pool, order.id) });
+  } catch (e) {
+    await db.query('ROLLBACK').catch(() => {});
+    next(e);
+  } finally { db.release(); }
 };
 
-// @desc    Add review to order
-// @route   POST /api/orders/:id/review
-// @access  Private
+exports.updateOrderStatus = async (req, res, next) => {
+  const db = await pool.connect();
+  try {
+    const allowed = ['Pending', 'Confirmed', 'Preparing', 'Out for Delivery', 'Delivered', 'Cancelled'];
+    if (!allowed.includes(req.body.status)) return res.status(400).json({ success: false, message: 'Invalid order status' });
+    await db.query('BEGIN');
+    const found = await db.query('SELECT id,status,payment_status FROM orders WHERE id=$1 FOR UPDATE', [req.params.id]);
+    if (!found.rowCount) {
+      await db.query('ROLLBACK');
+      return res.status(404).json({ success: false, message: 'Order not found' });
+    }
+    const order = found.rows[0];
+    if (order.status === 'Cancelled' && req.body.status !== 'Cancelled') {
+      await db.query('ROLLBACK');
+      return res.status(409).json({ success: false, message: 'Cancelled orders cannot be reopened' });
+    }
+    if (req.body.status === 'Cancelled' && order.status !== 'Cancelled') {
+      if (order.status === 'Delivered' || order.payment_status === 'Paid') {
+        await db.query('ROLLBACK');
+        return res.status(409).json({ success: false, message: 'Delivered or paid orders require a separate refund/cancellation process' });
+      }
+      const items = await db.query('SELECT product_id,quantity FROM order_items WHERE order_id=$1 AND product_id IS NOT NULL', [order.id]);
+      for (const item of items.rows) {
+        await db.query('UPDATE products SET stock_quantity=stock_quantity+$1,in_stock=TRUE,updated_at=NOW() WHERE id=$2', [item.quantity, item.product_id]);
+      }
+      await db.query("UPDATE orders SET status='Cancelled',cancelled_at=NOW(),cancel_reason='Cancelled by admin',updated_at=NOW() WHERE id=$1", [order.id]);
+    } else {
+      await db.query('UPDATE orders SET status=$1,delivered_at=CASE WHEN $1=$2 THEN NOW() ELSE delivered_at END,updated_at=NOW() WHERE id=$3',
+        [req.body.status, 'Delivered', req.params.id]);
+    }
+    await db.query('COMMIT');
+    res.json({ success: true, data: await getOrderWithItems(pool, req.params.id) });
+  } catch (e) {
+    await db.query('ROLLBACK').catch(() => {});
+    next(e);
+  } finally { db.release(); }
+};
 exports.addReview = async (req, res, next) => {
   try {
-    const { rating, review } = req.body;
-
-    const order = await Order.findById(req.params.id);
-
-    if (!order) {
-      return res.status(404).json({
-        success: false,
-        message: 'Order not found'
-      });
-    }
-
-    // Make sure user owns this order
-    if (order.user.toString() !== req.user.id) {
-      return res.status(403).json({
-        success: false,
-        message: 'Not authorized to review this order'
-      });
-    }
-
-    // Can only review delivered orders
-    if (order.status !== 'Delivered') {
-      return res.status(400).json({
-        success: false,
-        message: 'Can only review delivered orders'
-      });
-    }
-
-    order.rating = rating;
-    order.review = review;
-
-    await order.save();
-
-    res.status(200).json({
-      success: true,
-      data: order
-    });
-  } catch (error) {
-    next(error);
-  }
+    const rating = Number(req.body.rating);
+    if (!Number.isFinite(rating) || rating < 1 || rating > 5 || !Number.isInteger(rating)) return res.status(400).json({ success: false, message: 'Rating must be an integer from 1 to 5' });
+    const review = typeof req.body.review === 'string' ? req.body.review.slice(0, 2000) : '';
+    const r = await pool.query("UPDATE orders SET rating=$1,review=$2,updated_at=NOW() WHERE id=$3 AND user_id=$4 AND status='Delivered' RETURNING id",
+      [rating, review, req.params.id, req.user.id]);
+    if (!r.rowCount) return res.status(400).json({ success: false, message: 'Order not found or not delivered' });
+    res.json({ success: true, data: await getOrderWithItems(pool, r.rows[0].id) });
+  } catch (e) { next(e); }
 };
 
-// @desc    Get all orders (Admin only)
-// @route   GET /api/orders/admin/all
-// @access  Private/Admin
 exports.getAllOrders = async (req, res, next) => {
   try {
-    const orders = await Order.find()
-      .populate('user', 'name email phone')
-      .populate('items.product')
-      .sort('-createdAt');
-
-    res.status(200).json({
-      success: true,
-      count: orders.length,
-      data: orders
-    });
-  } catch (error) {
-    next(error);
-  }
+    const r = await pool.query('SELECT id FROM orders ORDER BY created_at DESC');
+    res.json({ success: true, count: r.rowCount, data: await Promise.all(r.rows.map(x => getOrderWithItems(pool, x.id))) });
+  } catch (e) { next(e); }
 };
