@@ -68,7 +68,7 @@ async function main() {
     for (const p of d.products) {
       const pid = id(p); if (!pid) throw new Error('Product missing _id');
       await client.query('INSERT INTO products (id,name,description,price,category,emoji,image_url,image_public_id,rating,reviews,tags,prep_time,is_new,is_trending,in_stock,stock_quantity,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)',
-        [pid,str(p.name,'Unnamed product'),str(p.description,''),num(p.price),en(p.category,['Breads','Cakes','Pastries','Cookies','Specials'],'Specials'),str(p.emoji,'🍞'),str(p.image && p.image.url,''),str(p.image && p.image.publicId,''),num(p.rating),num(p.reviews),Array.isArray(p.tags)?p.tags.map(String):[],str(p.prepTime,'Fresh daily'),bool(p.isNew),bool(p.isTrending),bool(p.inStock,true),Math.max(0,Math.trunc(num(p.stockQuantity,100))),date(p.createdAt),date(p.updatedAt)]);
+        [pid,str(p.name,'Unnamed product'),str(p.description,''),num(p.price),en(p.category,['Breads','Cakes','Pastries','Cookies','Specials'],'Specials'),str(p.emoji,'🍞'),str(p.image && p.image.url,''),str(p.image && p.image.publicId,''),num(p.rating),num(p.reviews),Array.isArray(p.tags)?p.tags.map(String):[],str(p.prepTime,'Fresh daily'),bool(p.isNew),bool(p.isTrending),bool(p.inStock,true),Math.max(0,Math.trunc(num(p.stockQuantity,100))),date(p.createdAt) || new Date().toISOString(),date(p.updatedAt) || date(p.createdAt) || new Date().toISOString()]);
     }
 
     for (const uid of orphanOrderUsers) {
