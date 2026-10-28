@@ -138,16 +138,42 @@ exports.cancelOrder = async (req, res, next) => {
 };
 
 exports.updateOrderStatus = async (req, res, next) => {
+  const db = await pool.connect();
   try {
     const allowed = ['Pending', 'Confirmed', 'Preparing', 'Out for Delivery', 'Delivered', 'Cancelled'];
     if (!allowed.includes(req.body.status)) return res.status(400).json({ success: false, message: 'Invalid order status' });
-    const r = await pool.query('UPDATE orders SET status=$1,delivered_at=CASE WHEN $1=$2 THEN NOW() ELSE delivered_at END,updated_at=NOW() WHERE id=$3 RETURNING id',
-      [req.body.status, 'Delivered', req.params.id]);
-    if (!r.rowCount) return res.status(404).json({ success: false, message: 'Order not found' });
-    res.json({ success: true, data: await getOrderWithItems(pool, r.rows[0].id) });
-  } catch (e) { next(e); }
+    await db.query('BEGIN');
+    const found = await db.query('SELECT id,status,payment_status FROM orders WHERE id=$1 FOR UPDATE', [req.params.id]);
+    if (!found.rowCount) {
+      await db.query('ROLLBACK');
+      return res.status(404).json({ success: false, message: 'Order not found' });
+    }
+    const order = found.rows[0];
+    if (order.status === 'Cancelled' && req.body.status !== 'Cancelled') {
+      await db.query('ROLLBACK');
+      return res.status(409).json({ success: false, message: 'Cancelled orders cannot be reopened' });
+    }
+    if (req.body.status === 'Cancelled' && order.status !== 'Cancelled') {
+      if (order.status === 'Delivered' || order.payment_status === 'Paid') {
+        await db.query('ROLLBACK');
+        return res.status(409).json({ success: false, message: 'Delivered or paid orders require a separate refund/cancellation process' });
+      }
+      const items = await db.query('SELECT product_id,quantity FROM order_items WHERE order_id=$1 AND product_id IS NOT NULL', [order.id]);
+      for (const item of items.rows) {
+        await db.query('UPDATE products SET stock_quantity=stock_quantity+$1,in_stock=TRUE,updated_at=NOW() WHERE id=$2', [item.quantity, item.product_id]);
+      }
+      await db.query("UPDATE orders SET status='Cancelled',cancelled_at=NOW(),cancel_reason='Cancelled by admin',updated_at=NOW() WHERE id=$1", [order.id]);
+    } else {
+      await db.query('UPDATE orders SET status=$1,delivered_at=CASE WHEN $1=$2 THEN NOW() ELSE delivered_at END,updated_at=NOW() WHERE id=$3',
+        [req.body.status, 'Delivered', req.params.id]);
+    }
+    await db.query('COMMIT');
+    res.json({ success: true, data: await getOrderWithItems(pool, req.params.id) });
+  } catch (e) {
+    await db.query('ROLLBACK').catch(() => {});
+    next(e);
+  } finally { db.release(); }
 };
-
 exports.addReview = async (req, res, next) => {
   try {
     const rating = Number(req.body.rating);
