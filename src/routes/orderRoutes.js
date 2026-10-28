@@ -5,7 +5,6 @@ const {
   getOrders,
   getOrder,
   cancelOrder,
-  updateOrderStatus,
   addReview
 } = require('../controllers/orderController');
 const { requireAuth, withAuth, clerkAuth } = require('../middleware/clerkAuth');
