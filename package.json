@@ -12,7 +12,7 @@
     "bakery",
     "api",
     "express",
-    "mongodb"
+    "postgresql"
   ],
   "author": "Your Name",
   "license": "ISC",
