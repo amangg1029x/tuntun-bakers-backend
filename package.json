@@ -6,13 +6,13 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
-    "check": "node --check src/server.js && node --check src/controllers/adminController.js && node --check src/controllers/orderController.js && node --check src/controllers/paymentController.js && node --check src/controllers/userController.js && node --check src/middleware/clerkAuth.js && node --check src/routes/orderRoutes.js && node --check src/routes/adminRoutes.js"
+    "check": "node --check src/server.js && node --check src/controllers/authController.js && node --check src/controllers/adminController.js && node --check src/controllers/orderController.js && node --check src/controllers/paymentController.js && node --check src/controllers/userController.js && node --check src/middleware/clerkAuth.js && node --check src/routes/orderRoutes.js && node --check src/routes/adminRoutes.js"
   },
   "keywords": [
     "bakery",
     "api",
     "express",
-    "mongodb"
+    "postgresql"
   ],
   "author": "Your Name",
   "license": "ISC",
@@ -27,7 +27,6 @@
     "express": "^4.18.2",
     "express-validator": "^7.0.1",
     "jsonwebtoken": "^9.0.2",
-    "mongoose": "^8.0.0",
     "multer": "^2.0.2",
     "razorpay": "^2.9.6",
     "pg": "^8.16.3"
