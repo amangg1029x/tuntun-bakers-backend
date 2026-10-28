@@ -61,7 +61,11 @@ exports.refundPayment=async(req,res,next)=>{
   let options;
   if(amount!==undefined&&amount!==null&&amount!==''){const n=Number(amount);if(!Number.isFinite(n)||n<=0)return res.status(400).json({success:false,message:'Refund amount must be positive'});options={amount:Math.round(n*100)};}
   const refund=await razorpay.payments.refund(paymentId,options);
-  await pool.query("UPDATE orders SET payment_status='Refunded',updated_at=NOW() WHERE id=$1",[r.rows[0].id]);
+  const refundedPaise=Number(refund.amount);
+  const original=(await pool.query('SELECT total_amount FROM orders WHERE id=$1',[r.rows[0].id])).rows[0];
+  const totalPaise=Math.round(Number(original.total_amount)*100);
+  const fullyRefunded=refund.status==='processed'&&Number.isFinite(refundedPaise)&&refundedPaise>=totalPaise;
+  if(fullyRefunded) await pool.query("UPDATE orders SET payment_status='Refunded',updated_at=NOW() WHERE id=$1",[r.rows[0].id]);
   res.json({success:true,data:refund});
  }catch(e){next(e);}
 };
