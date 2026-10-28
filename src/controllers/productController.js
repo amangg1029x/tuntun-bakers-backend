@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const pool = require('../config/postgres');
 
 const CATEGORIES = ['Breads', 'Cakes', 'Pastries', 'Cookies', 'Specials'];
@@ -149,6 +150,7 @@ exports.getProduct = async (req, res, next) => {
 exports.createProduct = async (req, res, next) => {
   try {
     const data = normalizeInput(req.body || {});
+    data.id = crypto.randomUUID();
     const keys = Object.keys(data);
     const columns = keys.join(', ');
     const placeholders = keys.map((_, i) => `$${i + 1}`).join(', ');
