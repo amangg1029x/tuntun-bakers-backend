@@ -6,4 +6,5 @@ npm-debug.log*
 yarn-debug.log*
 pnpm-debug.log*
 coverage/
+*.migration-export.json
 .DS_Store
