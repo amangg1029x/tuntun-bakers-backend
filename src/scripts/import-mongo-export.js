@@ -46,12 +46,8 @@ async function main() {
     await client.query('BEGIN'); inTransaction = true;
     const check = await client.query("SELECT (SELECT COUNT(*) FROM users)+(SELECT COUNT(*) FROM products)+(SELECT COUNT(*) FROM carts)+(SELECT COUNT(*) FROM favorites)+(SELECT COUNT(*) FROM orders) AS total");
     if (Number(check.rows[0].total) !== 0) throw new Error('Target database is not empty; import refused.');
-    if (!apply) {
-      await client.query('ROLLBACK'); inTransaction = false;
-      console.log(JSON.stringify(report,null,2));
-      console.log('Dry run only. No rows were written. Review before using --apply.');
-      return;
-    }
+    // Both modes execute all INSERTs inside this transaction. Dry run rolls back
+    // at the end, so it validates real constraints without persisting any rows.
 
     for (const u of d.users) {
       const uid = id(u); if (!uid) throw new Error('User missing _id');
@@ -111,9 +107,16 @@ async function main() {
         ix++; orderItemCount++;
       }
     }
-    await client.query('COMMIT'); inTransaction=false;
-    console.log(JSON.stringify({...report,imported:{users:d.users.length+orphanOrderUsers.size,products:d.products.length,carts:cartCount,cartItems:cartItemCount,favorites:favoriteCount,favoriteItems:favoriteItemCount,orders:d.orders.length,orderItems:orderItemCount}},null,2));
-    console.log('Import committed. Verify row counts and application behavior before any production cutover.');
+    const result = {...report,simulatedOrImported:{users:d.users.length+orphanOrderUsers.size,products:d.products.length,carts:cartCount,cartItems:cartItemCount,favorites:favoriteCount,favoriteItems:favoriteItemCount,orders:d.orders.length,orderItems:orderItemCount}};
+    if (apply) {
+      await client.query('COMMIT'); inTransaction=false;
+      console.log(JSON.stringify(result,null,2));
+      console.log('Import committed. Verify row counts and application behavior before any production cutover.');
+    } else {
+      await client.query('ROLLBACK'); inTransaction=false;
+      console.log(JSON.stringify(result,null,2));
+      console.log('Dry run passed: all inserts satisfied current SQL constraints, and the transaction was rolled back. No rows were written.');
+    }
   } catch (e) {
     if (inTransaction) await client.query('ROLLBACK').catch(()=>{});
     throw e;
