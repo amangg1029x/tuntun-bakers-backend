@@ -4,7 +4,8 @@ const cookieParser=require('cookie-parser');
 require('dotenv').config();
 const {clerkMiddleware}=require('@clerk/express');
 const pool=require('./config/postgres');
-const required=['DATABASE_URL','CLERK_SECRET_KEY','CLIENT_URL','RAZORPAY_KEY_ID','RAZORPAY_KEY_SECRET'];
+const required=['CLERK_SECRET_KEY','CLIENT_URL','RAZORPAY_KEY_ID','RAZORPAY_KEY_SECRET'];
+if(!process.env.DATABASE_URL&&!process.env.POSTGRES_URL){console.error('Missing required environment variable: DATABASE_URL (or POSTGRES_URL)');process.exit(1);}
 for(const k of required)if(!process.env[k]){console.error('Missing required environment variable: '+k);process.exit(1);}
 const app=express();
 app.use(express.json());app.use(express.urlencoded({extended:true}));app.use(cookieParser());
