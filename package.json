@@ -5,7 +5,8 @@
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
-    "dev": "nodemon src/server.js"
+    "dev": "nodemon src/server.js",
+    "check": "node --check src/server.js && node --check src/controllers/adminController.js && node --check src/controllers/orderController.js && node --check src/controllers/paymentController.js && node --check src/controllers/userController.js && node --check src/middleware/clerkAuth.js && node --check src/routes/orderRoutes.js && node --check src/routes/adminRoutes.js"
   },
   "keywords": [
     "bakery",
