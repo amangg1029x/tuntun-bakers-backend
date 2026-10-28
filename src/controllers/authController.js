@@ -2,8 +2,25 @@ const crypto=require('crypto');
 const pool=require('../config/postgres');
 const rowUser=u=>({_id:u.id,id:u.id,clerkId:u.clerk_id,name:u.name,email:u.email,phone:u.phone,role:u.role,isEmailVerified:u.is_email_verified,isPhoneVerified:u.is_phone_verified,preferences:u.preferences,stats:u.stats,createdAt:u.created_at,updatedAt:u.updated_at});
 
+function verifyClerkWebhook(req){
+ const secret=process.env.CLERK_WEBHOOK_SECRET;
+ const id=req.get('svix-id'),timestamp=req.get('svix-timestamp'),signatures=req.get('svix-signature');
+ if(!secret||!id||!timestamp||!signatures||!req.rawBody)return false;
+ const seconds=Number(timestamp);
+ if(!Number.isFinite(seconds)||Math.abs(Date.now()/1000-seconds)>300)return false;
+ const key=Buffer.from(secret.replace(/^whsec_/,''),'base64');
+ const expected=crypto.createHmac('sha256',key).update(id+'.'+timestamp+'.').update(req.rawBody).digest('base64');
+ return signatures.split(' ').some(part=>{
+  const [version,value]=part.split(',');
+  if(version!=='v1'||!value)return false;
+  const supplied=Buffer.from(value),calculated=Buffer.from(expected);
+  return supplied.length===calculated.length&&crypto.timingSafeEqual(supplied,calculated);
+ });
+}
+
 exports.clerkWebhook=async(req,res)=>{
  try{
+  if(!verifyClerkWebhook(req))return res.status(401).json({success:false,message:'Invalid webhook signature'});
   const {type,data}=req.body||{};
   if(type==='user.created'||type==='user.updated'){
    const email=data?.email_addresses?.find(e=>e.id===data.primary_email_address_id)?.email_address||data?.email_addresses?.[0]?.email_address;
