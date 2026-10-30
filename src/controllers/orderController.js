@@ -188,7 +188,38 @@ exports.addReview = async (req, res, next) => {
 
 exports.getAllOrders = async (req, res, next) => {
   try {
-    const r = await pool.query('SELECT id FROM orders ORDER BY created_at DESC');
-    res.json({ success: true, count: r.rowCount, data: await Promise.all(r.rows.map(x => getOrderWithItems(pool, x.id))) });
+    // Return the camelCase shape expected by the admin frontend. PostgreSQL
+    // rows use snake_case and numeric columns may be strings; map explicitly.
+    const r = await pool.query(`
+      SELECT o.id, o.order_number AS "orderNumber", o.user_id AS "userId",
+             o.delivery_address AS "deliveryAddress",
+             o.payment_method AS "paymentMethod",
+             o.payment_status AS "paymentStatus",
+             o.razorpay_order_id AS "razorpayOrderId",
+             o.razorpay_payment_id AS "razorpayPaymentId",
+             o.status, o.subtotal, o.delivery_charge AS "deliveryCharge",
+             o.total_amount AS "totalAmount", o.notes,
+             o.created_at AS "createdAt", o.updated_at AS "updatedAt",
+             u.name AS "customerName", u.email AS "customerEmail"
+      FROM orders o
+      LEFT JOIN users u ON u.id = o.user_id
+      ORDER BY o.created_at DESC
+    `);
+    const data = await Promise.all(r.rows.map(async row => {
+      const items = await pool.query(`
+        SELECT id AS "_id", product_id AS "productId",
+               product_name AS name, unit_price AS price,
+               quantity, emoji
+        FROM order_items WHERE order_id = $1 ORDER BY id
+      `, [row.id]);
+      const { customerName, customerEmail, ...order } = row;
+      return {
+        ...order,
+        _id: order.id,
+        user: { name: customerName || 'N/A', email: customerEmail || 'N/A' },
+        items: items.rows
+      };
+    }));
+    res.json({ success: true, count: data.length, data });
   } catch (e) { next(e); }
 };
